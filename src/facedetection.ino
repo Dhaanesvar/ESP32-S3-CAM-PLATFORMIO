@@ -4,8 +4,8 @@
 #include "WiFi.h"
 #include "img_converters.h"
 
-static QueueHandle_t xQueueAIFrame = NULL;
 static QueueHandle_t xQueueIICData = NULL;
+static QueueHandle_t xQueueAIFrame = NULL;
 static QueueHandle_t xQueueStreamFrame = NULL;
 
 static SemaphoreHandle_t xJpegMutex = NULL;
@@ -48,6 +48,8 @@ static void update_latest_jpeg(uint8_t *jpeg_buf, size_t jpeg_len)
 
 static void task_stream_collector(void *arg)
 {
+  uint32_t stream_fail_count = 0;
+
   while (true)
   {
     camera_fb_t *frame = NULL;
@@ -60,19 +62,9 @@ static void task_stream_collector(void *arg)
 
       uint8_t *jpeg_buf = NULL;
       size_t jpeg_len = 0;
-      bool converted = false;
+      bool converted = frame2jpg(frame, 80, &jpeg_buf, &jpeg_len);
 
-      if (frame->format == PIXFORMAT_JPEG)
-      {
-        jpeg_len = frame->len;
-        jpeg_buf = (uint8_t *)malloc(jpeg_len);
-        if (jpeg_buf)
-        {
-          memcpy(jpeg_buf, frame->buf, jpeg_len);
-          converted = true;
-        }
-      }
-      else
+      if (!converted)
       {
         converted = fmt2jpg(frame->buf,
                             frame->len,
@@ -86,7 +78,20 @@ static void task_stream_collector(void *arg)
 
       if (converted && jpeg_buf && jpeg_len > 0)
       {
+        stream_fail_count = 0;
         update_latest_jpeg(jpeg_buf, jpeg_len);
+      }
+      else
+      {
+        stream_fail_count++;
+        if ((stream_fail_count % 30) == 0)
+        {
+          printf("[STREAM] JPEG conversion failed count=%lu format=%d w=%u h=%u\r\n",
+                 (unsigned long)stream_fail_count,
+                 (int)frame->format,
+                 (unsigned int)frame->width,
+                 (unsigned int)frame->height);
+        }
       }
 
       esp_camera_fb_return(frame);
@@ -199,13 +204,13 @@ void setup()
   Serial.println("[BOOT] ESP32S3 face detection started");
 
   xJpegMutex = xSemaphoreCreateMutex();
+  /* 创建图像传输队列（长度1，仅保留最新帧） */
+  xQueueAIFrame = xQueueCreate(1, sizeof(camera_fb_t *));
 
-  /* 创建图像传输队列 */
-  xQueueAIFrame = xQueueCreate(2, sizeof(camera_fb_t *)); 
   /* 创建IIC数据传输队列 */
   xQueueIICData = xQueueCreate(2, sizeof(iic_send_data_t *));
-  /* 创建Web流媒体图像队列 */
-  xQueueStreamFrame = xQueueCreate(2, sizeof(camera_fb_t *));
+  /* 创建Web流媒体图像队列（长度1，仅保留最新帧） */
+  xQueueStreamFrame = xQueueCreate(1, sizeof(camera_fb_t *));
 
   /* 注册摄像头处理任务 */
   register_camera(PIXFORMAT_RGB565, FRAMESIZE_240X240, 4, xQueueAIFrame);

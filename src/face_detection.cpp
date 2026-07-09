@@ -78,11 +78,20 @@ static void task_process_handler(void *arg)
           printf("[FACE] none\r\n");
         }
       }
-
     }
+
     if (xQueueFrameO)
     {
-      xQueueSend(xQueueFrameO, &frame, portMAX_DELAY);
+      camera_fb_t *stale_frame = NULL;
+      if (xQueueReceive(xQueueFrameO, &stale_frame, 0) == pdTRUE && stale_frame)
+      {
+        esp_camera_fb_return(stale_frame);
+      }
+
+      if (xQueueSend(xQueueFrameO, &frame, 0) != pdTRUE)
+      {
+        esp_camera_fb_return(frame);
+      }
     }
     else if (gReturnFB)
     {
@@ -94,8 +103,8 @@ static void task_process_handler(void *arg)
     }
     if (xQueueResult)
     {
-      xQueueSend(xQueueResult, &detect_result, portMAX_DELAY);             
-    }          
+      xQueueSend(xQueueResult, &detect_result, portMAX_DELAY);
+    }
   }
 }
 

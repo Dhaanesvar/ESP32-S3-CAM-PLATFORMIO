@@ -6,14 +6,52 @@ static const char *TAG = "camera";
 
 static QueueHandle_t xQueueFrameO = NULL;
 
+static const char *sensor_name_from_pid(uint16_t pid)
+{
+    switch (pid)
+    {
+    case 0x2640:
+        return "OV2640";
+    case 0x3660:
+        return "OV3660";
+    case 0x5640:
+        return "OV5640";
+    case 0x2145:
+        return "GC2145";
+    case 0x0308:
+        return "GC0308";
+    case 0x032A:
+        return "GC032A";
+    default:
+        return "UNKNOWN_SENSOR";
+    }
+}
+
 static void task_process_handler(void *arg)
 {
     while (true)
     {
-        camera_fb_t *frame = esp_camera_fb_get();
-        if (frame)
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (!fb)
         {
-            xQueueSend(xQueueFrameO, &frame, portMAX_DELAY);
+            continue;
+        }
+
+        if (!xQueueFrameO)
+        {
+            esp_camera_fb_return(fb);
+            continue;
+        }
+
+        camera_fb_t *stale_fb = NULL;
+        if (xQueueReceive(xQueueFrameO, &stale_fb, 0) == pdTRUE && stale_fb)
+        {
+            esp_camera_fb_return(stale_fb);
+        }
+
+        if (xQueueSend(xQueueFrameO, &fb, 0) != pdTRUE)
+        {
+            esp_camera_fb_return(fb);
         }
     }
 }
@@ -63,7 +101,7 @@ void register_camera(const pixformat_t pixel_fromat,
     config.xclk_freq_hz = XCLK_FREQ_HZ;
     config.frame_size = frame_size;
     config.pixel_format = pixel_fromat; // for streaming
-    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+    config.grab_mode = CAMERA_GRAB_LATEST;
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.jpeg_quality = 16;
     config.fb_count = fb_count;
@@ -77,12 +115,24 @@ void register_camera(const pixformat_t pixel_fromat,
     }
 
     sensor_t *s = esp_camera_sensor_get();
+    if (!s)
+    {
+        ESP_LOGE(TAG, "esp_camera_sensor_get() returned NULL");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Detected camera sensor: %s (PID: 0x%04X)", get_camera_sensor_name(), s->id.PID);
+    printf("[CAM] Detected camera sensor: %s (PID: 0x%04X)\r\n", get_camera_sensor_name(), s->id.PID);
+
     if (s->id.PID == OV3660_PID || s->id.PID == OV2640_PID) {
-        s->set_vflip(s, 1); //flip it back    
+        s->set_vflip(s, 1); // flip it back
     } else if (s->id.PID == GC0308_PID) {
         s->set_hmirror(s, 0);
     } else if (s->id.PID == GC032A_PID) {
         s->set_vflip(s, 1);
+    } else if (s->id.PID == GC2145_PID) {
+        s->set_vflip(s, 1);
+        s->set_hmirror(s, 0);
     }
     
     //initial sensors are flipped vertically and colors are a bit saturated
@@ -94,4 +144,16 @@ void register_camera(const pixformat_t pixel_fromat,
 
     xQueueFrameO = frame_o;
     xTaskCreatePinnedToCore(task_process_handler, TAG, 3 * 1024, NULL, 5, NULL, 1);
+}
+
+const char *get_camera_sensor_name(void)
+{
+    sensor_t *s = esp_camera_sensor_get();
+    if (!s)
+    {
+        ESP_LOGE(TAG, "get_camera_sensor_name: sensor pointer is NULL");
+        return "SENSOR_NOT_AVAILABLE";
+    }
+
+    return sensor_name_from_pid(s->id.PID);
 }

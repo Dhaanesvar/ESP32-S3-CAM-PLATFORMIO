@@ -375,6 +375,8 @@ extern "C"
                          const uint8_t fb_count,
                          const QueueHandle_t frame_o);
 
+    const char *get_camera_sensor_name(void);
+
 
 #ifdef __cplusplus
 }
