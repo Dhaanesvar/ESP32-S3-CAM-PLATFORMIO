@@ -1,4 +1,4 @@
-# ESP32-S3 Face Cam (PlatformIO)
+# ESP32-S3 Face Cam - PlatformIO
 
 ## 1) Project Summary
 
